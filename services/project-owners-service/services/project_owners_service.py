@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 import logging
+import requests
 
 from models.models import ProjectOwner
 from schemas.schemas import ProjectOwnerCreate, ProjectOwnerUpdate, ProjectOwnerResponse
@@ -42,6 +43,13 @@ class ProjectOwnersService:
             db.refresh(db_project_owner)
             
             logger.info(f"Project owner created: {db_project_owner.name} (NIT: {db_project_owner.nit})")
+            
+            # Notificar vía webhook a otros servicios
+            try:
+                self._notify_webhook_created(db_project_owner)
+            except Exception as e:
+                logger.warning(f"Error enviando webhook: {e}")
+            
             return ProjectOwnerResponse.from_orm(db_project_owner)
             
         except IntegrityError as e:
@@ -52,6 +60,44 @@ class ProjectOwnersService:
             db.rollback()
             logger.error(f"Error creating project owner: {str(e)}")
             raise
+    
+    def _notify_webhook_created(self, project_owner):
+        """Notificar creación vía webhook"""
+        try:
+            webhook_url = "http://localhost:8003/webhooks/project-owners/created"
+            project_owner_data = {
+                "nit": project_owner.nit,
+                "name": project_owner.name,
+                "email": project_owner.email,
+                "phone": project_owner.phone,
+                "address": project_owner.address,
+                "city": project_owner.city,
+                "department": project_owner.department,
+                "country": project_owner.country,
+                "website": project_owner.website,
+                "contact_person": project_owner.contact_person,
+                "contact_phone": project_owner.contact_phone,
+                "contact_email": project_owner.contact_email,
+                "is_active": project_owner.is_active,
+                "is_verified": project_owner.is_verified,
+                "created_at": project_owner.created_at.isoformat() if project_owner.created_at else None,
+                "updated_at": project_owner.updated_at.isoformat() if project_owner.updated_at else None
+            }
+            
+            response = requests.post(
+                webhook_url,
+                json=project_owner_data,
+                headers={"Content-Type": "application/json"},
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Webhook enviado exitosamente para constructora {project_owner.nit}")
+            else:
+                logger.error(f"Error enviando webhook: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Error enviando webhook: {e}")
     
     def get_project_owners(self, db: Session, skip: int = 0, limit: int = 100) -> List[ProjectOwnerResponse]:
         """
