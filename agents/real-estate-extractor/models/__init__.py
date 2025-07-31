@@ -1,0 +1,1 @@
+# Models package for Real Estate Data Extractor 
