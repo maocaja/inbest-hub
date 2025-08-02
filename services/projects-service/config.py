@@ -28,6 +28,10 @@ class Config:
     # Development Configuration
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     
+    # Services URLs
+    PROJECT_OWNERS_SERVICE_URL = os.getenv("PROJECT_OWNERS_SERVICE_URL", "http://localhost:8002")
+    EMBEDDING_SERVICE_URL = os.getenv("EMBEDDING_SERVICE_URL", "http://localhost:8005")
+    
     # Validation Rules
     MIN_NAME_LENGTH = 2
     MAX_NAME_LENGTH = 100

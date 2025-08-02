@@ -87,6 +87,11 @@ async def create_project(
     try:
         result = projects_service.create_project(db, project)
         logger.info(f"Project created successfully: {result.name}")
+        
+        # Notificar a otros servicios
+        project_data = result.dict()
+        await webhook_handler.handle_project_created(project_data, result.id)
+        
         return result
     except ValueError as e:
         logger.error(f"Validation error creating project: {str(e)}")
@@ -153,6 +158,11 @@ async def update_project(
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proyecto no encontrado")
         logger.info(f"Project updated: {result.name} (ID: {result.id})")
+        
+        # Notificar a otros servicios
+        project_data = result.dict()
+        await webhook_handler.handle_project_updated(project_data, project_id)
+        
         return result
     except ValueError as e:
         logger.error(f"Validation error updating project: {str(e)}")
@@ -200,6 +210,10 @@ async def delete_project(
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proyecto no encontrado")
         logger.info(f"Project deleted: ID {project_id}")
+        
+        # Notificar a otros servicios
+        await webhook_handler.handle_project_deleted(project_id)
+        
     except HTTPException:
         raise
     except Exception as e:
