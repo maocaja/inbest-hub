@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import List, Optional
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -27,20 +27,48 @@ app = FastAPI(
     description="Servicio de gestión de archivos multimedia para el backend inmobiliario"
 )
 
-# Configurar CORS
+# Configurar CORS de forma segura
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=Config.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:3000",  # Frontend local
+        "https://inbest.com",      # Frontend producción
+        "https://app.inbest.com"   # App producción
+    ],
+    allow_credentials=False,  # No permitir credenciales para APIs públicas
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+    expose_headers=["X-Total-Count"],
+    max_age=3600,  # Cache CORS por 1 hora
 )
+
+# Middleware para Security Headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Middleware para agregar headers de seguridad"""
+    response = await call_next(request)
+    
+    # Security Headers según OWASP
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    
+    # Headers adicionales de seguridad
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    
+    return response
 
 # Crear tablas al iniciar
 @app.on_event("startup")
 async def startup_event():
     create_tables()
-    logger.info(f"{Config.APP_NAME} iniciado en puerto {Config.PORT}")
+    logger.info(f"{Config.APP_NAME} iniciado en puerto {Config.PORT} con configuración de seguridad")
 
 @app.get("/", tags=["Root"])
 async def root():

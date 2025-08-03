@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 import uvicorn
 from datetime import datetime
 from typing import List, Dict, Any
+import os
 
 from config import Config
 from services.chat_service import ChatService
@@ -26,14 +27,42 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configurar CORS
+# Configurar CORS de forma segura
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:3000",  # Frontend local
+        "https://inbest.com",      # Frontend producción
+        "https://app.inbest.com"   # App producción
+    ],
+    allow_credentials=False,  # No permitir credenciales para APIs públicas
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+    expose_headers=["X-Total-Count"],
+    max_age=3600,  # Cache CORS por 1 hora
 )
+
+# Middleware para Security Headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Middleware para agregar headers de seguridad"""
+    response = await call_next(request)
+    
+    # Security Headers según OWASP
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    
+    # Headers adicionales de seguridad
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    
+    return response
 
 # Inicializar servicios
 chat_service = ChatService()
@@ -41,7 +70,7 @@ chat_service = ChatService()
 @app.on_event("startup")
 async def startup_event():
     """Evento de inicio de la aplicación"""
-    logger.info("Iniciando Chat API...")
+    logger.info("Iniciando Chat API con configuración de seguridad...")
     
     try:
         # Validar configuración
@@ -59,7 +88,7 @@ async def startup_event():
         except Exception as e:
             logger.warning(f"No se pudo verificar servicios externos: {e}")
         
-        logger.info("Chat API iniciado correctamente")
+        logger.info("Chat API iniciado correctamente con headers de seguridad")
         
     except Exception as e:
         logger.error(f"Error iniciando Chat API: {e}")
