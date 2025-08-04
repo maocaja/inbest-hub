@@ -3,16 +3,95 @@
 Manejador de webhooks para recibir notificaciones de cambios de constructoras
 """
 
+import httpx
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from database.database import SessionLocal
 from models.models import ProjectOwner
 from datetime import datetime
+from config import Config
 
 logger = logging.getLogger(__name__)
 
 class WebhookHandler:
     """Manejador de webhooks para constructoras"""
+    
+    def __init__(self):
+        self.embedding_service_url = Config.EMBEDDING_SERVICE_URL
+        
+    async def notify_embedding_service(self, action: str, project_data: Dict[str, Any], project_id: int):
+        """
+        Notificar al embedding-service sobre cambios en proyectos
+        
+        Args:
+            action: 'create', 'update', o 'delete'
+            project_data: Datos del proyecto
+            project_id: ID del proyecto
+        """
+        try:
+            webhook_data = {
+                "project_id": project_id,
+                "action": action,
+                "data": project_data if action != "delete" else None
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.embedding_service_url}/webhook/project-sync",
+                    json=webhook_data,
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"Successfully notified embedding-service about project {project_id} {action}")
+                else:
+                    logger.warning(f"Failed to notify embedding-service: {response.status_code}")
+                    
+        except Exception as e:
+            logger.error(f"Error notifying embedding-service: {e}")
+    
+    async def notify_project_owners_service(self, action: str, project_data: Dict[str, Any]):
+        """
+        Notificar al project-owners-service sobre cambios en proyectos
+        """
+        try:
+            # Obtener el NIT de la constructora
+            construction_company_nit = project_data.get("construction_company_nit")
+            if not construction_company_nit:
+                logger.warning("No construction_company_nit found in project data")
+                return
+            
+            webhook_url = f"{Config.PROJECT_OWNERS_SERVICE_URL}/webhooks/projects/{action}"
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    webhook_url,
+                    json=project_data,
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"Successfully notified project-owners-service about project {action}")
+                else:
+                    logger.warning(f"Failed to notify project-owners-service: {response.status_code}")
+                    
+        except Exception as e:
+            logger.error(f"Error notifying project-owners-service: {e}")
+    
+    async def handle_project_created(self, project_data: Dict[str, Any], project_id: int):
+        """Manejar la creación de un proyecto"""
+        await self.notify_embedding_service("create", project_data, project_id)
+        await self.notify_project_owners_service("created", project_data)
+    
+    async def handle_project_updated(self, project_data: Dict[str, Any], project_id: int):
+        """Manejar la actualización de un proyecto"""
+        await self.notify_embedding_service("update", project_data, project_id)
+        await self.notify_project_owners_service("updated", project_data)
+    
+    async def handle_project_deleted(self, project_id: int):
+        """Manejar la eliminación de un proyecto"""
+        await self.notify_embedding_service("delete", {}, project_id)
+        await self.notify_project_owners_service("deleted", {"project_id": project_id})
     
     def handle_project_owner_created(self, project_owner_data: Dict[str, Any]) -> bool:
         """Manejar creación de constructora"""

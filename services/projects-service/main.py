@@ -3,7 +3,7 @@ Aplicación principal de FastAPI para Projects Service
 """
 
 import logging
-from fastapi import FastAPI, Depends, HTTPException, status, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -32,14 +32,42 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configurar CORS
+# Configurar CORS de forma segura
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:3000",  # Frontend local
+        "https://inbest.com",      # Frontend producción
+        "https://app.inbest.com"   # App producción
+    ],
+    allow_credentials=False,  # No permitir credenciales para APIs públicas
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+    expose_headers=["X-Total-Count"],
+    max_age=3600,  # Cache CORS por 1 hora
 )
+
+# Middleware para Security Headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Middleware para agregar headers de seguridad"""
+    response = await call_next(request)
+    
+    # Security Headers según OWASP
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    
+    # Headers adicionales de seguridad
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    
+    return response
 
 # Instanciar servicios
 projects_service = ProjectsService()
@@ -48,7 +76,7 @@ webhook_handler = WebhookHandler()
 @app.on_event("startup")
 async def startup_event():
     """Evento de inicio de la aplicación"""
-    logger.info("Projects Service starting up...")
+    logger.info("Projects Service starting up with security configuration...")
     
     # Validar configuración
     config_errors = Config.validate_config()
@@ -56,7 +84,7 @@ async def startup_event():
         logger.error(f"Configuration errors: {config_errors}")
         raise ValueError(f"Configuration errors: {config_errors}")
     
-    logger.info("Configuration validated successfully")
+    logger.info("Configuration validated successfully with security headers")
 
 @app.get("/")
 async def root():
@@ -87,6 +115,11 @@ async def create_project(
     try:
         result = projects_service.create_project(db, project)
         logger.info(f"Project created successfully: {result.name}")
+        
+        # Notificar a otros servicios
+        project_data = result.dict()
+        await webhook_handler.handle_project_created(project_data, result.id)
+        
         return result
     except ValueError as e:
         logger.error(f"Validation error creating project: {str(e)}")
@@ -153,6 +186,11 @@ async def update_project(
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proyecto no encontrado")
         logger.info(f"Project updated: {result.name} (ID: {result.id})")
+        
+        # Notificar a otros servicios
+        project_data = result.dict()
+        await webhook_handler.handle_project_updated(project_data, project_id)
+        
         return result
     except ValueError as e:
         logger.error(f"Validation error updating project: {str(e)}")
@@ -200,6 +238,10 @@ async def delete_project(
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proyecto no encontrado")
         logger.info(f"Project deleted: ID {project_id}")
+        
+        # Notificar a otros servicios
+        await webhook_handler.handle_project_deleted(project_id)
+        
     except HTTPException:
         raise
     except Exception as e:
